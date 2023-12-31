@@ -1,0 +1,116 @@
+      // Set prescaler to measure bit stream - CAN BE SET DURING INITIALIZATION!
+      //TCCR0B &= ~0x1; // div 256 ==> each Timer tick = 256*1 / 12 000 000 = 21,33us ==> 256 Timer ticks = 5,46ms
+      // Clear the physical bit counter
+      phyBitCount = 0;
+      // Clear the preamble indicator
+      preamble = false;
+      
+      // Set value for timer compare register in order to change the prescaler to detect next packet preamble.
+      // ...when timer hits 255 it will trigger the timer interrupt and change the prescaler.
+      // CAN BE SET DURING INITIALIZATION! 
+      //OCR0A = 255;
+      // should also consider to enable / disable the timer interrupt at this point??
+      //TIMSK |= 0x1; // Set the interrupt mask register bit for OCIE0A (Timer/Counter0 Compare Match Interrupt Enable)
+      //TIFR |= 0x1; // Clearing the interrupt Output Compare Flag 0 A AND triggering the interrupt handler for this.
+      /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      //
+      //  _|<---->|_ ...the preamble will succeed the bit-stream data packet by 3 ms. 
+      // | |______| |
+      //          <->...the bit-width is approximately 220 µs
+      // Each sybol is 10 bits long
+      // Maximum low time is approximately 1400 µs
+      // 
+      // The timer-interrupt, with the prescaler set to 64, will trigger 5,46 ms after initialization.
+      // So, when ever the pin change interrupt is triggered while reading the bit stream, 
+      // the timer interrupt should not be triggered until all the bits have been read.
+      // Note that the counter register should be cleared in pin change interrupt service routine.
+      // 
+      // The timer prescaler setting will also provide sufficient resolution to determine the 
+      // puls width of most narrow and the widest pulses in the bit stream. Even the proper detection of the preable.
+      //
+      // So, how to distinguish between a bit in the data packet and the preamble? 
+      // A: The preamble will always preceed the bit-stream by approximatly 3 ms
+      //
+      // State 0 [PREAMBLE_WAIT0]: waiting for a preamble (no timer interrupt enabled)
+      
+      // PIN Change interrupt from low-to-high (clear TCNT0 register)
+      // State 0 -> State 1 [PREAMBLE_WAIT1]
+
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is a single bit, clear the TCNT0 register)
+      // State 1 -> state 2 [PREAMBLE_WAIT2]
+
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is NOT single bit, clear the TCNT0 register)
+      // State 1 -> state 0 [PREAMBLE_WAIT0]
+
+      // PIN Change interrupt from low-to-high (read TCNT0 register and IF preamble detected, clear the TCNT0 register)
+      // state 2 -> State 3 [PREAMBLE_REC]
+
+      // PIN Change interrupt from low-to-high (read TCNT0 register and IF preamble NOT detected, clear the TCNT0 register)
+      // state 2 -> State 0 [PREAMBLE_WAIT0]
+
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is a single bit, clear the TCNT0 register)
+      // state 3 -> State 4 [BIT_SYMBOL_READ_START]
+
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is NOT single bit, clear the TCNT0 register)
+      // state 3 -> State 0 [PREAMBLE_WAIT0]
+
+
+      // PIN Change interrupt from low-to-high (read TCNT0 register and IF it is (10 - READ_BITS > 0) bits, clear the TCNT0 register)
+      // state 4 -> State 5 [READ_BITS]
+
+      // PIN Change interrupt from low-to-high (read TCNT0 register and IF it is (10 - READ_BITS > 0) bits, clear the TCNT0 register)
+      // state 5 -> State 5 [READ_BITS]
+
+      // PIN Change interrupt from low-to-high (read TCNT0 register and IF it is (10 - READ_BITS = 0) bits, clear the TCNT0 register)
+      // state 5 -> State 6 [BIT_SYMBOL_READ_COMPLETE] 
+
+      
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is (10 - READ_BITS > 0) bits, clear the TCNT0 register)
+      // state 4 -> State 5 [READ_BITS]
+
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is (10 - READ_BITS > 0) bits, clear the TCNT0 register)
+      // state 5 -> State 5 [READ_BITS]
+
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is (10 - READ_BITS < 0) bits, clear the TCNT0 register)
+      // state 5 -> State 4 [BIT_SYMBOL_READ_START] Assemble the bit-code and store
+
+      // PIN Change interrupt from high-to-low (read TCNT0 register and IF it is a sinle bit, clear the TCNT0 register)
+      // state 6 -> State 4 [BIT_SYMBOL_READ_START] Assemble the bit-code and store
+   
+
+
+      // IF preamble   -> State 3 (next iteration will start counting the physical bits)
+
+      // state 3: Single bit received (clear TCNT0 register and enable timer interrupt)
+      // state 4: Timer interrupt (timer compare reg. = 255)  
+      
+      // state 5: if state 4: PIN Change interrupt from low-to-high (clear TCNT0 register)
+      // state 6: if state 5: PIN Change interrupt from high-to-low (read TCNT0 register and check if it is a single bit, clear TCNT0)
+      // state 7: if state 6: PIN Change interrupt from low-to-high (read TCNT0 register and determine '0' bits, clear TCNT0) 
+      // state 6: if state 7: PIN Change interrupt from high-to-low (read TCNT0 register and check if it is a single bit, clear TCNT0, bit-count < bits in data packet)
+      //
+      // 
+       
+      return;
+   }
+   clkTickCount = TCNT0;
+   phyBitCount += clkTickCount/phyBitWidth;
+   if ((PINB&0x02)>>1 == 1){
+      // From low to high...
+      for(int i=0; i < phyBitCount; i++){
+         phyPacketBits[stringIndex++] = 0;
+      }
+   }
+   else {
+      // From low to high...
+      for(int i=0; i < phyBitCount; i++){
+         phyPacketBits[stringIndex++] = 1;
+      }
+   }
+}
+
+ISR(TIM0_COMPA_vect) {
+   //TIMSK &= ~0x1 
+   //TCCR0B |= 0x5;
+   preamble = true;
+}
