@@ -1,0 +1,10 @@
+It seems that the isr triggers constantly when connected to the 433 MHz rf-receiver.
+The output high-levels from the 433 MHz rf-receiver is probably to low low for the ATtiny MCU.
+It needs a simple level shifter.
+Optic?
+
+
+STILL SOME ISSUES - same receivers act differently...
+Noise and receiver quality may be a challenge
+
+More investigation needed
